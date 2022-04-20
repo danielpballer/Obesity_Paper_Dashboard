@@ -1,0 +1,396 @@
+---
+title: "Can the Participant Speak Beyond Likert"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+    social: ["menu"]
+    source_code: embed
+    navbar:
+      - { title: "Created by: Daniel Baller", icon: "fa-github", href: "https://github.com/danielpballer"  }
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(tm)
+library(syuzhet)
+library(DT)
+library(plotly)
+library(tidytext)
+```
+
+```{r loading data}
+data=read.csv("American Public.csv")
+```
+
+```{r}
+#Make and clean corpus
+dataCorpus <- Corpus(VectorSource(data$Responses))
+dataCorpus <- tm_map(dataCorpus, content_transformer(tolower))
+dataCorpus <- tm_map(dataCorpus, removePunctuation)
+dataCorpus <- tm_map(dataCorpus, removeWords, stopwords('english'))
+dataCorpus <- tm_map(dataCorpus, removeWords, c("etc"))
+dataCorpus <- tm_map(dataCorpus,stripWhitespace)
+
+```
+
+```{r sentiment scores}
+#Getting sentiment scores from the nrc dictionary
+sent_AP<-get_sentiment(dataCorpus$content,method = "nrc")
+#Bind sentiment scores to original dataset
+sent_AP<-dplyr::bind_cols(data,data.frame(sent_AP))
+```
+
+
+```{r plotting the distribution of sentiment scores}
+sent_dist <- sent_AP %>% 
+  ggplot(aes(x=sent_AP))+ 
+    geom_histogram()+
+    labs(x = "Sentiment Score",y = "Number of Responses",title = "Sentiment scores")+
+    theme_bw()
+```
+
+```{r}
+#Sentiment by emotions
+#getting emotions from the nrc dictionary
+emotions<-get_nrc_sentiment(dataCorpus$content)
+#calculating the total number of times each emotion appears in the data
+sum_emotions=data.frame(value=apply(emotions[1:8],2,sum))
+
+#changing row names to be a column in the data
+sum_emotions$key=rownames(sum_emotions)
+
+#plotting a bar plot of emotion frequency
+emotion_bar <- sum_emotions %>% 
+  ggplot(aes(x=reorder(key,-value), y=value))+
+  geom_bar(stat="identity")+
+  labs(x="Emotion",y="Number of Words",title="Word count by emotion")+
+  theme_bw()
+```
+
+```{r Sentiment By perceived weight status}
+#plotting boxplot of sentiment by perceived weight status
+box_p = sent_AP %>%
+  filter(Weight.Status != "No opinion") %>%
+  mutate(Weight.Status = fct_relevel(Weight.Status, 
+            "Very underweight", "Somewhat underweight", "About right", 
+            "Somewhat overweight", "Very overweight")) %>%
+  ggplot(aes(x=Weight.Status, y = sent_AP, fill = Weight.Status)) + 
+  geom_boxplot(notch = F) + 
+  geom_jitter(color="black", size=0.2, alpha=0.4)+
+  labs(title = "American Sentiment About People with Obesity", x = "Perception of Personal Weight Situation", 
+       y = "Sentiment") + 
+  theme_bw()+
+  theme(plot.title = element_text(hjust = .5),
+        legend.position = "none")
+```
+
+
+```{r unigrams}
+# calculating top unigrams
+#Breaking responses down to individual words
+#there was an error in how ' was being dealt with in contractions.  responses were separated into individual words and then ' was removed from words where necessary.
+response_words <- data %>% 
+  select(Responses) %>% 
+  drop_na()%>%    
+  mutate(Responses = as.character(Responses)) %>% 
+  unnest_tokens(word, Responses) #%>% 
+  #write_csv("words.csv")
+
+#Loading data after manually removing ' from it's and don't
+response_words = read_csv("words.csv") 
+
+#combining some like terms
+response_words = response_words %>% 
+  mutate(word = case_when(word=="obesity"~"obese",
+                          word=="overweight"~"obese",
+                          TRUE~word))
+  
+#Selecting the most common words
+top_words <- response_words %>% 
+  anti_join(stop_words) %>% # Remove stop words
+  filter(!word %in% c("its", "dont")) %>% 
+  count(word, sort = TRUE) %>% 
+  top_n(15) %>%     # Keep top 15 
+  mutate(word = fct_inorder(word))     # Make the words an ordered factor so they plot in order
+
+#Creating the Unigram Plot
+uni_plot = ggplot(top_words, aes(y = fct_rev(word), x = n)) + 
+  geom_col() + 
+  guides(fill = "none") +
+  labs(y = NULL, x = NULL, 
+       title = "Most frequent unigrams") +
+  theme_bw()
+```
+
+
+```{r Bigrams}
+#Bigrams
+#Creating the list of bigrams from the responses
+#there was an error in how ' was being dealt with in contractions.  responses were separated into bigrams and then ' was removed from words where necessary.
+response_bigrams <- data %>% 
+  select(Responses) %>% 
+  drop_na()%>% 
+  # n = 2 here means bigrams
+  unnest_tokens(bigram, Responses, token = "ngrams", n = 2) %>% 
+  # Split the bigrams into two words so we can remove stopwords
+  separate(bigram, c("word1", "word2"), sep = " ") %>% 
+   filter(!word1 %in% stop_words$word,
+          !word2 %in% stop_words$word
+          ) %>% 
+   filter(!word1 %in% c("american")) %>% 
+  # Put the two word columns back together
+  unite(bigram, word1, word2, sep = " ") #%>% 
+  #write_csv("bigrams.csv")
+
+#Loading data after manually removing ' from it's and don't
+response_bigrams = read_csv("bigrams.csv")
+
+#Consolidating similar responses
+  response_bigrams = response_bigrams %>% 
+  mutate(bigram = case_when(bigram=="lazy unmotivated"~"lazy people",
+                            bigram=="lazy slobs"~"lazy people",
+                            bigram=="fast food"~"junk food",
+                            bigram=="overweight people"~"obese people",
+                            bigram=="theyre lazy"~"lazy people",
+                            bigram=="fat lazy"~"lazy people",
+                            bigram=="unhealthy lazy"~"lazy people",
+                            TRUE~bigram))
+
+#Selecting the most common bigrams 
+top_bigrams <- response_bigrams %>% 
+  count(bigram, sort = TRUE) %>%     # Count all the bigrams
+  top_n(14) %>%     # Keep top 15 This is altered in case of ties for the last one that cause for many more entries to be included.
+  mutate(bigram = fct_inorder(bigram))    # Make the bigrams an ordered factor so they plot in order
+
+#Plotting the most common bigrams
+bigram_plot = ggplot(top_bigrams, aes(y = fct_rev(bigram), x = n)) + 
+  geom_col() + 
+  guides(fill = "none") +
+  labs(y = NULL, x = "Count", 
+       title = "Most frequent bigrams") +
+  theme_bw()
+```
+
+
+```{r Trigrams}
+#Trigrams
+#Creating trigrams from the responses
+#there was an error in how ' was being dealt with in contractions.  responses were separated into bigrams and then ' was removed from words where necessary.
+response_trigrams <- data %>% 
+  select(Responses) %>% 
+  drop_na()%>% 
+  unnest_tokens(trigram, Responses, token = "ngrams", n = 3) %>% 
+  separate(trigram, c("word1", "word2", "word3"), sep = " ") %>% 
+  filter(!word1 %in% stop_words$word) %>% #whether to filter stop words from some or all of the terms in the bigram need to be assessed on a case by case basis.
+  filter(!word2 %in% c("who")) %>% 
+  unite(trigram, word1, word2, word3, sep = " ") %>% 
+  #removing common phrases that do not include stop words
+  filter(!trigram %in% c("overweight people are", "obese people are","people with obesity",
+                        "fat people are", "obesity is a", "people that are", "people they think",
+                        "people think they")) #%>% write_csv("trigrams.csv")
+
+#Loading data after manually removing ' from it's and don't
+response_trigrams = read_csv("trigrams.csv")
+
+#Consolidating similar responses
+response_trigrams = response_trigrams %>% 
+  mutate(trigram = case_when(trigram=="lazy i think"~"people are lazy",
+                            trigram=="lazy and disgusting"~"people are lazy",
+                            trigram=="lazy and unhealthy"~"people are lazy",
+                            trigram=="lazy that they"~"people are lazy",
+                            trigram=="lazy they think"~"people are lazy",
+                            trigram=="lazy and gluttonous"~"people are lazy",
+                            trigram=="lazy and have"~"people are lazy",
+                            trigram=="obesity are lazy"~"people are lazy",
+                            trigram=="theyre lazy and"~"people are lazy",
+                            trigram=="lazy and dont"~"people are lazy",
+                            TRUE~trigram)) %>% 
+   filter(!trigram %in% c("american public thinks", "american public is"))
+
+#Selecting the most common trigrams 
+top_trigrams <- response_trigrams %>% 
+  count(trigram, sort = TRUE) %>% 
+  top_n(10) %>%   # Keep top 10 
+  mutate(trigram = fct_inorder(trigram))
+
+#Plotting the most common trigrams
+trigram_plot = ggplot(top_trigrams, aes(y = fct_rev(trigram), x = n)) + 
+  geom_col() + 
+  guides(fill = "none") +
+  labs(y = NULL, x = NULL, 
+       title = "Most frequent trigrams") +
+  theme_bw()
+```
+
+Overview
+=============================================================================
+
+Sidebar {.sidebar}
+-----------------------------------------------------------------------------
+Authors
+
+* Diana M. Thomas
+
+* Benjamin Siegel
+
+* [Daniel Baller](https://github.com/danielpballer) 
+
+* Joseph Lindquist 
+
+* Gwyn Cready
+
+* James T. Zervios 
+
+* Joseph F. Nadglowski Jr.
+
+* Theodore K. Kyle
+
+
+Citation: Thomas, D. M., Siegel, B., Baller, D., Lindquist, J., Cready, G., Zervios, J. T., . . . Kyle, T. K. (2020). Can the participant speak beyond likert? free-text responses in COVID-19 obesity surveys. Obesity, 28(12), 2268-2271. doi: http://dx.doi.org/10.1002/oby.23037
+
+Abstract
+-----------------------------------------------------------------------------
+
+### Abstract
+
+Research on lifestyle changes during the coronavirus disease (COVID-19) pandemic often relies on Likert-type scale question surveys (1-3). Survey participants  respond  to  questions  by  selecting  one  of  the  numerically  ordered  choices  “Strongly  Disagree” = 1,  “Disagree” = 2,  “Neutral” = 3, “Agree” =   4, and “Strongly Agree” =   5. Analyzing Likert-type data requires statistical  methods  beyond  approaches  like  linear  regression  (4).  First,  it  is unclear whether the distance between choices is truly equal. For exam-ple,  are  Agree  and  Strongly  Agree  more  close  than  Neutral  and  Agree?  Second,  summarizing  results  using  traditional  means  makes  little  sense.  For example, would a mean of 4.5 imply “Agree and a half” (5)? Finally, participants tend to select more central choices and less extremes (6).
+
+Using  natural  language  processing  (NLP)  (7,8),  survey  research  can  capture  information  from  free-text  response  questions.  Investigators  are  released  from  prescribing  questions  a  priori  and  they  gain  more  participant  driven  information.  For  example,  “I  have  changed  eating  habits during quarantine” followed by Likert scale choices can be for-mulated as “Describe any changes in eating during quarantine.” Here, we  demonstrate  the  power  of  NLP  to  derive  meaningful  insights  that  enhance and improve traditional Likert surveys.
+
+Full Paper
+-----------------------------------------------------------------------------
+
+### Full Paper
+
+![Full Paper](flowcode.png)
+
+
+Sentiment Distribution {data-navmenu="Sentiment Scores"}
+=======================================================================
+
+Distribution of sentiment 
+-----------------------------------------------------------------------
+
+### Distribution of sentiment
+
+```{r}
+ggplotly(sent_dist)
+```
+
+Emotion Frequency 
+-----------------------------------------------------------------------
+
+### Emotion Frequency
+
+```{r}
+ggplotly(emotion_bar)
+```
+
+Sentiment by Weight Status {data-navmenu="Sentiment Scores"}
+=======================================================================
+
+
+
+```{r}
+ggplotly(box_p)
+```
+
+
+Word Frequency 
+=======================================================================
+
+Word Frequency {.tabset}
+-----------------------------------------------------------------------
+
+### Unigrams
+
+```{r}
+ggplotly(uni_plot)
+```
+
+### Bigrams
+
+```{r}
+ggplotly(bigram_plot)
+```
+
+### Trigrams
+
+```{r}
+ggplotly(trigram_plot)
+```
+
+All Responses {data-navmenu="Data"}
+==============================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### All Responses 
+
+```{r, out.width="100%", out.height="100%"}
+data %>% 
+  datatable(extensions = 'Buttons', options = list(
+    dom = 'Blfrtip',
+    buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+    lengthMenue = list( c(10, 25, 50, 100, -1), c(10, 25, 50, 100, "All") )
+  )
+)
+```
+
+
+Unigrams {data-navmenu="Data"}
+==============================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### Unigrams
+
+```{r, out.width="100%", out.height="100%"}
+response_words %>% 
+  datatable(extensions = 'Buttons', options = list(
+    dom = 'Blfrtip',
+    buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+    lengthMenue = list( c(10, 25, 50, 100, -1), c(10, 25, 50, 100, "All") )
+  )
+)
+```
+
+Bigrams {data-navmenu="Data"}
+==============================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### Bigrams
+
+```{r, out.width="100%", out.height="100%"}
+response_bigrams %>% 
+  datatable(extensions = 'Buttons', options = list(
+    dom = 'Blfrtip',
+    buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+    lengthMenue = list( c(10, 25, 50, 100, -1), c(10, 25, 50, 100, "All") )
+  )
+)
+```
+
+Trigrams {data-navmenu="Data"}
+==============================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### Trigrams
+
+```{r, out.width="100%", out.height="100%"}
+response_trigrams %>% 
+  datatable(extensions = 'Buttons', options = list(
+    dom = 'Blfrtip',
+    buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+    lengthMenue = list( c(10, 25, 50, 100, -1), c(10, 25, 50, 100, "All") )
+  )
+)
+```
