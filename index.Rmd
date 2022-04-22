@@ -71,19 +71,41 @@ emotion_bar <- sum_emotions %>%
 
 ```{r Sentiment By perceived weight status}
 #plotting boxplot of sentiment by perceived weight status
-box_p = sent_AP %>%
+#Read in the 2nd data
+data2 = read.csv("OAC Adult Weight Bias Survey.csv")
+#filter for the columns we need
+data2 = data2 %>% select(Weight.Status = Q_19, Response = Q_42)
+  
+#Create the corpus
+dataCorpus <- Corpus(VectorSource(as.vector(data2$Response))) %>%
+  tm_map(content_transformer(tolower)) %>%
+  tm_map(removePunctuation) %>%
+  tm_map(removeWords, stopwords('english')) %>%
+  tm_map(removeWords, c("etc")) %>%
+  tm_map(stripWhitespace) %>%
+  tm_map(content_transformer(removeNumbers))  
+
+#Find sentiment for each response
+data2 = data2 %>%
+  mutate(sentiment = get_sentiment(dataCorpus$content))
+
+#Create the boxplot
+box_p = data2 %>%
   filter(Weight.Status != "No opinion") %>%
   mutate(Weight.Status = fct_relevel(Weight.Status, 
-            "Very underweight", "Somewhat underweight", "About right", 
-            "Somewhat overweight", "Very overweight")) %>%
-  ggplot(aes(x=Weight.Status, y = sent_AP, fill = Weight.Status)) + 
-  geom_boxplot(notch = F) + 
-  geom_jitter(color="black", size=0.2, alpha=0.4)+
-  labs(title = "American Sentiment About People with Obesity", x = "Perception of Personal Weight Situation", 
+                            "Very underweight", "Somewhat underweight", "About right", 
+                            "Somewhat overweight", "Very overweight")) %>%
+  ggplot(aes(x=Weight.Status, y = sentiment, group = Weight.Status)) + 
+  geom_boxplot(notch = TRUE) + 
+  labs(title = "American Sentiment About People with Obesity", 
+       subtitle = "By Response - Perception of Personal Weight Situation",
+       x = "Perception of Personal Weight Situation", 
        y = "Sentiment") + 
-  theme_bw()+
+  theme_bw() +
+  #scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.5)+
   theme(plot.title = element_text(hjust = .5),
-        legend.position = "none")
+        plot.subtitle = element_text(hjust = .5))
 ```
 
 
@@ -332,6 +354,24 @@ Row
 
 ```{r, out.width="100%", out.height="100%"}
 data %>% 
+  datatable(extensions = 'Buttons', options = list(
+    dom = 'Blfrtip',
+    buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+    lengthMenue = list( c(10, 25, 50, 100, -1), c(10, 25, 50, 100, "All") )
+  )
+)
+```
+
+OAC Adult Weight Bias Survey {data-navmenu="Data"}
+==============================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### OAC Adult Weight Bias Survey 
+
+```{r, out.width="100%", out.height="100%"}
+data2 %>% 
   datatable(extensions = 'Buttons', options = list(
     dom = 'Blfrtip',
     buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
